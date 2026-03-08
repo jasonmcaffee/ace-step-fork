@@ -68,7 +68,7 @@
           <div class="muted small" style="margin-top:5px;" data-i18n="help.generation_mode"></div>
         </div>
         <div class="row right dice-inline">
-          <button id="dice" class="btn dice-btn" type="button" aria-label="Random from archive">
+          <button id="dice" class="btn dice-btn" type="button" aria-label="Random from archive" data-i18n-aria-label="btn.random_from_archive">
             <svg class="ico" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
               <rect x="4" y="4" width="16" height="16" rx="3" ry="3" fill="none" stroke="currentColor" stroke-width="2"></rect>
               <circle cx="9" cy="9" r="1.4"></circle>
@@ -120,27 +120,27 @@
 
       
       <div class="grid3">
-        <label class="lbl-inline">
-          <span class="setting-label" data-i18n="label.duration_seconds" data-i18n-title="label.duration_seconds"></span>
+        <div class="lbl-inline">
+          <label for="duration" class="setting-label" data-i18n="label.duration_seconds" data-i18n-title="label.duration_seconds"></label>
           <div style="display:flex;align-items:center;gap:8px;">
             <input id="duration" type="number" min="10" max="600" value="180" style="flex:1;" />
             <label class="chk inline"><input id="duration_auto" type="checkbox" checked /> <span data-i18n="opt.auto"></span></label>
           </div>
-        </label>
-        <label class="lbl-inline">
-          <span class="setting-label" data-i18n="label.bpm" data-i18n-title="label.bpm"></span>
+        </div>
+        <div class="lbl-inline">
+          <label for="bpm" class="setting-label" data-i18n="label.bpm" data-i18n-title="label.bpm"></label>
           <div style="display:flex;align-items:center;gap:8px;">
             <input id="bpm" type="number" min="30" max="300" data-i18n-placeholder="ph.auto" style="flex:1;" />
             <label class="chk inline"><input id="bpm_auto" type="checkbox" checked /> <span data-i18n="opt.auto"></span></label>
           </div>
-        </label>
-        <label class="lbl-inline">
-          <span class="setting-label" data-i18n="label.seed" data-i18n-title="label.seed"></span>
+        </div>
+        <div class="lbl-inline">
+          <label for="seed" class="setting-label" data-i18n="label.seed" data-i18n-title="label.seed"></label>
           <div style="display:flex;align-items:center;gap:8px;">
             <input id="seed" type="number" placeholder="-1" style="flex:1;" />
             <label class="chk inline"><input id="seed_random" type="checkbox" checked /> <span data-i18n="opt.auto"></span></label>
           </div>
-        </label>
+        </div>
       </div>
       <div class="helpgrid grid3" style="margin-top:5px;">
         <div class="muted small" data-i18n="help.duration"></div>
@@ -151,8 +151,8 @@
       <div class="gap-md"></div>
 
       <div class="grid3">
-        <label class="lbl-inline">
-          <span class="setting-label" data-i18n="label.key_scale" data-i18n-title="label.key_scale"></span>
+        <div class="lbl-inline">
+          <label for="key_root" class="setting-label" data-i18n="label.key_scale" data-i18n-title="label.key_scale"></label>
           <div style="display:flex;align-items:center;gap:8px;">
             <div style="display:flex;align-items:center;gap:8px;flex:1;">
               <select id="key_root" style="flex:1;"></select>
@@ -161,21 +161,21 @@
             </div>
             <label class="chk inline"><input id="key_auto" type="checkbox" checked /> <span data-i18n="opt.auto"></span></label>
           </div>
-        </label>
-        <label class="lbl-inline">
-          <span class="setting-label" data-i18n="label.time_signature" data-i18n-title="label.time_signature"></span>
+        </div>
+        <div class="lbl-inline">
+          <label for="timesignature" class="setting-label" data-i18n="label.time_signature" data-i18n-title="label.time_signature"></label>
           <div style="display:flex;align-items:center;gap:8px;">
             <select id="timesignature" class="meta-select meta-select-compact"></select>
             <label class="chk inline"><input id="timesig_auto" type="checkbox" checked /> <span data-i18n="opt.auto"></span></label>
           </div>
-        </label>
-        <label class="lbl-inline">
-          <span class="setting-label" data-i18n="label.vocal_language" data-i18n-title="label.vocal_language"></span>
+        </div>
+        <div class="lbl-inline">
+          <label for="vocal_language" class="setting-label" data-i18n="label.vocal_language" data-i18n-title="label.vocal_language"></label>
           <div style="display:flex;align-items:center;gap:8px;">
             <select id="vocal_language" class="meta-select meta-select-medium"></select>
             <label class="chk inline"><input id="language_auto" type="checkbox" checked /> <span data-i18n="opt.auto"></span></label>
           </div>
-        </label>
+        </div>
       </div>
       <div class="helpgrid grid3" style="margin-top:5px;">
         <div class="muted small" data-i18n="help.keyscale"></div>
@@ -490,7 +490,7 @@
               <div class="param-row">
                 <div class="field-line field-line-medium">
                   <span class="setting-label" data-i18n="label.infer_method" data-i18n-title="label.infer_method"></span>
-                  <select id="infer_method" aria-label="Inference method">
+                  <select id="infer_method" aria-label="Inference method" data-i18n-aria-label="label.infer_method">
                     <option value="ode">ODE</option>
                     <option value="sde">SDE</option>
                   </select>
@@ -504,7 +504,7 @@
                   <div class="row-space">
                     <span class="setting-label" data-i18n="label.timesteps" data-i18n-title="label.timesteps"></span>
                   </div>
-                  <textarea id="timesteps" rows="2" data-i18n-placeholder="ph.timesteps" aria-label="Timesteps schedule"></textarea>
+                  <textarea id="timesteps" rows="2" data-i18n-placeholder="ph.timesteps" aria-label="Timesteps schedule" data-i18n-aria-label="label.timesteps"></textarea>
                 </div>
                 <div class="muted small" data-i18n="help.timesteps"></div>
               </div>
@@ -737,10 +737,10 @@
       
       <div class="actionbar">
         <button id="submit" class="btn main-btn" data-i18n="btn.generate"></button>
-        <div class="model-wrap" aria-label="Model selection">
+        <div class="model-wrap" aria-label="Model selection" data-i18n-aria-label="title.model_select">
           <div class="model-label" data-i18n="title.model_select"></div>
           <div class="model-desc" data-i18n="help.model_select_desc"></div>
-          <select id="model_select" aria-label="Model">
+          <select id="model_select" aria-label="Model" data-i18n-aria-label="title.model_select">
             <option value="acestep-v15-base"                  data-i18n="model.base"></option>
             <option value="acestep-v15-sft"                   data-i18n="model.sft"></option>
             <option value="acestep-v15-sft-turbo-ta-0.5"      data-i18n="model.sft_turbo_ta_05"></option>

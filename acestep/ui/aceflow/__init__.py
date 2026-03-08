@@ -1,5 +1,5 @@
-"""AceFlow UI (Italian/english).
+"""AceFlow UI (Italian/English).
 
-This UI is meant for remote friends testing: no model-init screen, no LoRA, no training, no A/B.
+This lightweight UI is meant only for songs generation: it includes LoRA support, while still omitting the model-init screen, training tools, and A/B flows.
 """
 from .app import create_app

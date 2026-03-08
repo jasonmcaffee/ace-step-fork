@@ -698,6 +698,12 @@
       node.setAttribute('title', t(k));
     });
 
+    document.querySelectorAll('[data-i18n-aria-label]').forEach((node) => {
+      const k = node.getAttribute('data-i18n-aria-label');
+      if (!k) return;
+      node.setAttribute('aria-label', t(k));
+    });
+
     
     const sel = document.getElementById('ui_lang_select');
     if (sel) {

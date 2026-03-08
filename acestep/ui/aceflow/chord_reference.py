@@ -73,6 +73,8 @@ _BASE_INTERVALS = {
     '7#5': [0, 4, 8, 10],
 }
 
+MAX_RENDER_DURATION_SEC = 600.0
+
 
 @dataclass
 class ParsedChord:
@@ -112,6 +114,18 @@ def parse_chord_symbol(symbol: str) -> Optional[ParsedChord]:
     desc = raw_desc.strip()
     descriptor = _DESCRIPTOR_ALIASES.get(desc)
     warning = None
+    uppercase_major_aliases = {
+        'M': 'maj',
+        'M6': '6',
+        'M7': 'maj7',
+        'M9': 'maj9',
+        'M11': 'maj9',
+        'M13': 'maj9',
+    }
+    uppercase_major_descriptor = uppercase_major_aliases.get(desc)
+    if descriptor is None and uppercase_major_descriptor is not None:
+        descriptor = uppercase_major_descriptor
+        warning = 'descriptor_fallback'
     if descriptor is None:
         lc = desc.lower()
         if 'maj9' in lc:
@@ -309,10 +323,11 @@ def synthesize_reference_wav_bytes(chords: list[str], bpm: float = 120.0, beats_
             warning_debug.append(_warning_debug_entry(symbol, parsed, parsed.warning, parsed.descriptor))
         parsed_sequence.append(parsed)
     base_duration = len(parsed_sequence) * chord_sec
-    wanted = max(base_duration, float(target_duration_sec or 0.0))
-    loop_count = max(1, int(math.ceil(wanted / max(base_duration, 0.001))))
+    requested_duration = max(base_duration, float(target_duration_sec or 0.0))
+    capped_duration = min(requested_duration, MAX_RENDER_DURATION_SEC)
+    loop_count = max(1, math.ceil(capped_duration / max(base_duration, 0.001)))
     expanded = parsed_sequence * loop_count
-    total_duration = max(base_duration, wanted)
+    total_duration = max(base_duration, capped_duration)
     total_samples = max(1, int(sample_rate * total_duration))
     pcm = np.zeros(total_samples, dtype=np.float32)
     prev_pad = None

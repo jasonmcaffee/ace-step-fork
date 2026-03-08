@@ -237,7 +237,7 @@ input[type=range]::-moz-range-thumb {
   padding: 0 !important;
   margin: -1px !important;
   overflow: hidden !important;
-  clip: rect(0, 0, 0, 0) !important;
+  clip-path: inset(50%) !important;
   white-space: nowrap !important;
   border: 0 !important;
 }
@@ -627,7 +627,7 @@ input[type="number"].num{
 }
 .chord-preview-line { display: grid; grid-template-columns: 170px 1fr; gap: 10px; padding: 4px 0; }
 .preview-k { color: var(--muted); font-size: 12px; font-weight: 700; }
-.preview-v { color: var(--text); font-size: 13px; line-height: 1.45; word-break: break-word; }
+.preview-v { color: var(--text); font-size: 13px; line-height: 1.45; overflow-wrap: anywhere; }
 @media (max-width: 860px) {
   .chord-preview-line { grid-template-columns: 1fr; gap: 4px; }
 }
@@ -676,7 +676,7 @@ input[type="number"].num{
   }
 }
 
-.chord-preview .preview-v { white-space: normal; word-break: break-word; }
+.chord-preview .preview-v { white-space: normal; overflow-wrap: anywhere; }
 
 
 #lm_status {
@@ -684,5 +684,5 @@ input[type="number"].num{
   text-align: right;
   max-width: 420px;
   line-height: 1.35;
-  word-break: break-word;
+  overflow-wrap: anywhere;
 }
