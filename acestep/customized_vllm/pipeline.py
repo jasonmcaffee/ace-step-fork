@@ -27,8 +27,9 @@ def _filter_by_top_k(logits, k):
 def _filter_by_nucleus(logits, k, p):
     """Combined top-k and nucleus (top-p) filtering.
 
-    Parameters are always tensors (never None) so torch.compile sees a stable graph.
+    Parameters are always tensors (never None).
     k=0 means skip top-k, p=1.0 means skip top-p.
+    Note: NOT compiled because .any() and int() cause graph breaks in dynamo.
     """
     has_k = (k > 0).any()
     has_p = (p < 1.0).any()
@@ -53,11 +54,10 @@ def _filter_by_nucleus(logits, k, p):
     return logits
 
 
-@torch.compile
 def sample_tokens(logits, temperatures, top_ks, top_ps):
-    """Temperature-scaled sampling with nucleus filtering.
+    """Temperature-scaled sampling with top-k/top-p filtering.
 
-    All parameters are tensors (never None) to keep torch.compile graph stable.
+    Uses Gumbel-max trick for efficient categorical sampling.
     """
     logits = logits.float().div_(temperatures.unsqueeze(1))
     _filter_by_nucleus(logits, top_ks, top_ps)
@@ -76,6 +76,7 @@ class InferencePipeline:
                  max_num_batched_tokens: int, max_model_len: int, gpu_memory_utilization: float,
                  enforce_eager: bool):
         torch._dynamo.config.capture_scalar_outputs = True
+        torch._dynamo.config.verbose = True
         self.block_size = block_size
         self.enforce_eager = enforce_eager
         self.max_num_seqs = max_num_seqs
@@ -311,13 +312,20 @@ class InferencePipeline:
         """
         if not slots or slots[0].logits_processor is None:
             return logits
-        processor = slots[0].logits_processor
-        ids_t = torch.tensor([slots[0].token_ids], device=logits.device)
-        processed = processor(ids_t, logits[0:1].clone())
-        logits[0] = processed[0]
-        for i in range(1, len(slots)):
-            if slots[i].logits_processor is not None:
-                logits[i] = logits[0]
+        try:
+            processor = slots[0].logits_processor
+            ids_t = torch.tensor([slots[0].token_ids], device=logits.device)
+            processed = processor(ids_t, logits[0:1].clone())
+            logits[0] = processed[0]
+            for i in range(1, len(slots)):
+                if slots[i].logits_processor is not None:
+                    logits[i] = logits[0]
+        except TypeError:
+            import traceback
+            print(f"\n[customized_vllm] TypeError in _constrain_logits "
+                  f"(n_slots={len(slots)}, processor_state={getattr(processor, 'state', '?')}):\n"
+                  f"{traceback.format_exc()}", file=sys.stderr, flush=True)
+            raise
         return logits
 
     def _penalize_repetitions(self, logits, slots, penalties):
@@ -341,29 +349,36 @@ class InferencePipeline:
     def execute_step(self, slots, is_prefill):
         """Full forward + sampling step. Returns list of sampled token IDs."""
         from acestep.customized_vllm import reset_context
-        is_cfg = slots[0].cfg_scale > 1.0 and slots[0].paired_slot is not None
-        logits = (self._execute_prefill(slots) if is_prefill
-                  else self._execute_autoregressive(slots))
-        reset_context()
-        temps, cfg_s, topk, topp, rep_pen = self._gather_sampling_config(slots, is_cfg)
+        try:
+            is_cfg = slots[0].cfg_scale > 1.0 and slots[0].paired_slot is not None
+            logits = (self._execute_prefill(slots) if is_prefill
+                      else self._execute_autoregressive(slots))
+            reset_context()
+            temps, cfg_s, topk, topp, rep_pen = self._gather_sampling_config(slots, is_cfg)
 
-        if is_cfg:
-            nc = len(slots) // 2
-            cond, uncond = logits[:nc], logits[nc:]
-            cond = self._penalize_repetitions(cond, slots[:nc], rep_pen)
-            cfg_logits = uncond + cfg_s.unsqueeze(1) * (cond - uncond)
-            cfg_logits = self._constrain_logits(cfg_logits, slots[:nc])
-            tids = sample_tokens(cfg_logits, temps, topk, topp).tolist()
-            if slots[0].logits_processor_update_state:
+            if is_cfg:
+                nc = len(slots) // 2
+                cond, uncond = logits[:nc], logits[nc:]
+                cond = self._penalize_repetitions(cond, slots[:nc], rep_pen)
+                cfg_logits = uncond + cfg_s.unsqueeze(1) * (cond - uncond)
+                cfg_logits = self._constrain_logits(cfg_logits, slots[:nc])
+                tids = sample_tokens(cfg_logits, temps, topk, topp).tolist()
+                if slots[0].logits_processor_update_state:
+                    slots[0].logits_processor_update_state(tids[0])
+                return tids
+
+            logits = self._penalize_repetitions(logits, slots, rep_pen)
+            logits = self._constrain_logits(logits.clone(), slots)
+            tids = sample_tokens(logits, temps, topk, topp).tolist()
+            if slots and slots[0].logits_processor_update_state:
                 slots[0].logits_processor_update_state(tids[0])
             return tids
-
-        logits = self._penalize_repetitions(logits, slots, rep_pen)
-        logits = self._constrain_logits(logits.clone(), slots)
-        tids = sample_tokens(logits, temps, topk, topp).tolist()
-        if slots and slots[0].logits_processor_update_state:
-            slots[0].logits_processor_update_state(tids[0])
-        return tids
+        except TypeError as exc:
+            import traceback
+            print(f"\n[customized_vllm] TypeError in execute_step "
+                  f"(prefill={is_prefill}, n_slots={len(slots)}):\n"
+                  f"{traceback.format_exc()}", file=sys.stderr, flush=True)
+            raise
 
     # -- CUDA graph capture ----------------------------------------------
 
