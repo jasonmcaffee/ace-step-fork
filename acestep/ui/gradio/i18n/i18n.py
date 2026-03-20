@@ -4,6 +4,7 @@ Supports multiple languages with easy translation management
 """
 import os
 import json
+from threading import Lock
 from typing import Dict, Optional
 
 
@@ -13,10 +14,11 @@ class I18n:
     def __init__(self, default_language: str = "en"):
         """
         Initialize i18n handler
-        
+
         Args:
             default_language: Default language code (en, zh, ja, etc.)
         """
+        self._lock = Lock()
         self.current_language = default_language
         self.languages_info: list[tuple[str, str, str]] = []
         self.translations: Dict[str, Dict[str, str]] = {}
@@ -52,11 +54,16 @@ class I18n:
                     self.languages_info.append((lang_code, lang_name, lang_native_name))
     
     def set_language(self, language: str):
-        """Set current language"""
-        if language in self.translations:
-            self.current_language = language
-        else:
-            print(f"Warning: Language '{language}' not found, using default")
+        """Set current language.
+
+        Acquires the instance lock so concurrent ``t()`` calls always
+        read a consistent ``current_language`` value.
+        """
+        with self._lock:
+            if language in self.translations:
+                self.current_language = language
+            else:
+                print(f"Warning: Language '{language}' not found, using default")
     
     def t(self, key: str, **kwargs) -> str:
         """
@@ -69,9 +76,14 @@ class I18n:
         Returns:
             Translated string
         """
+        # Snapshot current_language under lock so a concurrent
+        # set_language() call cannot mutate it mid-lookup.
+        with self._lock:
+            lang = self.current_language
+
         # Get translation from current language
         translation = self._get_nested_value(
-            self.translations.get(self.current_language, {}), 
+            self.translations.get(lang, {}),
             key
         )
         
@@ -133,25 +145,29 @@ class I18n:
 
 # Global i18n instance
 _i18n_instance: Optional[I18n] = None
+_i18n_lock = Lock()
 
 
 def get_i18n(language: Optional[str] = None) -> I18n:
     """
     Get global i18n instance
-    
+
     Args:
         language: Optional language to set
-    
+
     Returns:
         I18n instance
     """
     global _i18n_instance
-    
+
     if _i18n_instance is None:
-        _i18n_instance = I18n(default_language=language or "en")
-    elif language is not None:
+        with _i18n_lock:
+            if _i18n_instance is None:
+                _i18n_instance = I18n(default_language=language or "en")
+                return _i18n_instance
+    if language is not None:
         _i18n_instance.set_language(language)
-    
+
     return _i18n_instance
 
 
