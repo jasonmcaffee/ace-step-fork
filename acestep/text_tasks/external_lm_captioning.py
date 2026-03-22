@@ -6,6 +6,8 @@ from typing import Any
 
 from loguru import logger
 
+_FILTERED_METADATA_SENTINELS = {"", "unknown", "none", "n/a", "default"}
+
 
 def normalized_caption(text: str) -> str:
     """Return a normalized caption string for retry and equality checks."""
@@ -105,7 +107,7 @@ def build_format_request_intent(
         value = user_metadata.get(key)
         if isinstance(value, str):
             normalized = value.strip()
-            if normalized.lower() in {"", "unknown"}:
+            if normalized.lower() in _FILTERED_METADATA_SENTINELS:
                 continue
             intent_parts.append(f"{key}: {normalized}")
             continue

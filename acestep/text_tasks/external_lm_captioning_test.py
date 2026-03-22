@@ -146,6 +146,27 @@ class ExternalLmCaptioningTests(unittest.TestCase):
         self.assertNotIn("language:", intent)
         self.assertNotIn("duration:", intent)
 
+    def test_build_format_request_intent_filters_other_placeholder_metadata_values(self) -> None:
+        """Common placeholder strings should not be emitted into the provider intent."""
+
+        intent = build_format_request_intent(
+            caption="Dreamy synth-pop",
+            lyrics="City lights / carry me home",
+            user_metadata={
+                "bpm": "none",
+                "duration": "n/a",
+                "keyscale": "default",
+                "timesignature": "4/4",
+                "language": "N/A",
+            },
+        )
+
+        self.assertIn("timesignature: 4/4", intent)
+        self.assertNotIn("bpm:", intent)
+        self.assertNotIn("duration:", intent)
+        self.assertNotIn("keyscale:", intent)
+        self.assertNotIn("language:", intent)
+
 
 if __name__ == "__main__":
     unittest.main()
