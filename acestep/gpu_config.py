@@ -23,6 +23,7 @@ from loguru import logger
 DEBUG_MAX_CUDA_VRAM_ENV = "MAX_CUDA_VRAM"
 DEBUG_MAX_MPS_VRAM_ENV = "MAX_MPS_VRAM"
 DEBUG_MAX_XPU_VRAM_ENV = "MAX_XPU_VRAM"
+SAVE_MEMORY_ENV = "ACESTEP_SAVE_MEMORY"
 
 # Tolerance for 16GB detection: reported VRAM like 15.5GB is effectively 16GB hardware
 # Real-world 16GB GPUs often report 15.7-15.9GB due to system/driver reservations
@@ -214,6 +215,11 @@ class GPUConfig:
 
     # LM memory allocation (GB) for each model size
     lm_memory_gb: Dict[str, float]  # e.g., {"0.6B": 3, "1.7B": 8, "4B": 12}
+
+    # Save-memory mode: skip storing intermediate tensors in extra_outputs
+    # and disable auto_lrc / auto_score to reduce RAM usage.
+    # Controlled via ACESTEP_SAVE_MEMORY=1 environment variable.
+    save_memory_mode: bool = False
 
 
 def _apply_lm_backend_compatibility_overrides(config: GPUConfig) -> GPUConfig:
@@ -1464,10 +1470,18 @@ _global_gpu_config: Optional[GPUConfig] = None
 
 
 def get_global_gpu_config() -> GPUConfig:
-    """Get the global GPU configuration, initializing if necessary."""
+    """Get the global GPU configuration, initializing if necessary.
+
+    Respects the ``ACESTEP_SAVE_MEMORY`` environment variable: when set to
+    ``"1"`` or ``"true"``, ``save_memory_mode`` is enabled regardless of tier.
+    """
     global _global_gpu_config
     if _global_gpu_config is None:
         _global_gpu_config = get_gpu_config()
+        env_val = os.environ.get(SAVE_MEMORY_ENV, "").strip().lower()
+        if env_val in ("1", "true", "yes"):
+            _global_gpu_config.save_memory_mode = True
+            logger.info("[gpu_config] Save-memory mode enabled via {}={}".format(SAVE_MEMORY_ENV, env_val))
     return _global_gpu_config
 
 

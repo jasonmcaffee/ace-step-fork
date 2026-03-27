@@ -306,6 +306,7 @@
     "no_codes": "❌ No audio codes available. Please generate music first.",
     "score_failed": "❌ Scoring failed: {error}",
     "score_error": "❌ Error calculating score: {error}",
+    "lrc_save_memory_disabled": "❌ LRC generation is disabled in save-memory mode (ACESTEP_SAVE_MEMORY=1). Intermediate tensors are not stored to reduce RAM usage.",
     "lrc_no_batch_data": "❌ No batch data found. Please generate music first.",
     "lrc_no_extra_outputs": "❌ No extra outputs found. Condition tensors not available.",
     "lrc_missing_tensors": "❌ Missing required tensors for LRC generation.",
