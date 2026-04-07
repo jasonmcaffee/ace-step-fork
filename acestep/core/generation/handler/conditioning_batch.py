@@ -35,6 +35,7 @@ class ConditioningBatchMixin:
         audio_cover_strength: float = 1.0,
         cover_noise_strength: float = 0.0,
         chunk_mask_modes: Optional[List[str]] = None,
+        task_type: str = "",
     ) -> Dict[str, Any]:
         """Prepare model-ready conditioning batch tensors and metadata.
 
@@ -91,6 +92,7 @@ class ConditioningBatchMixin:
             repainting_end,
             silence_latent_tiled,
             chunk_mask_modes=chunk_mask_modes,
+            task_type=task_type,
         )
         precomputed_lm_hints_25hz = self._prepare_precomputed_lm_hints(
             batch_size, audio_code_hints, max_latent_length, silence_latent_tiled

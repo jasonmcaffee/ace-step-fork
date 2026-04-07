@@ -413,7 +413,7 @@ def generate_music(
         # and don't need LM to generate audio codes or metadata.
         # For extract tasks, LLM-generated captions can conflict with the extract instruction
         # and cause the DiT model to reconstruct input audio instead of extracting stems.
-        skip_lm_tasks = {"cover", "repaint", "extract"}
+        skip_lm_tasks = {"cover", "cover-nofsq", "repaint", "extract"}
         
         # Determine if we should use LLM
         # LLM is needed for:
@@ -597,7 +597,7 @@ def generate_music(
                 dit_input_vocal_language = lm_generated_metadata.get("vocal_language", dit_input_vocal_language)
 
         # Repaint/cover/extract: no LM run, so conditioning must come from params (caption + lyrics from GUI).
-        if params.task_type in ("repaint", "cover", "extract"):
+        if params.task_type in ("repaint", "cover", "cover-nofsq", "extract"):
             dit_input_caption = params.caption or dit_input_caption
             dit_input_lyrics = params.lyrics if params.lyrics is not None else dit_input_lyrics
             logger.info(f"[generate_music] {params.task_type} task: using params.caption='{params.caption}', params.lyrics='{params.lyrics}'")
@@ -606,7 +606,7 @@ def generate_music(
         # Cover/repaint/lego/extract: duration is locked to the source audio
         # length.  Silently ignore whatever the caller passed — the handler
         # will set audio_duration from the loaded waveform.
-        if params.task_type in ("cover", "repaint", "lego", "extract"):
+        if params.task_type in ("cover", "cover-nofsq", "repaint", "lego", "extract"):
             audio_duration = None
 
         # Phase 2: DiT music generation

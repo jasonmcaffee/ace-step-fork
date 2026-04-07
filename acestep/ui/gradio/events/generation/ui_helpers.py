@@ -101,8 +101,8 @@ def uncheck_auto_for_populated_fields(bpm, key_scale, time_signature, vocal_lang
 def update_audio_cover_strength_visibility(task_type_value, init_llm_checked, reference_audio=None):
     """Update audio_cover_strength visibility and label."""
     has_reference = _has_reference_audio(reference_audio)
-    is_visible = (task_type_value == "cover") or init_llm_checked or has_reference
-    if task_type_value == "cover":
+    is_visible = (task_type_value in ("cover", "cover-nofsq")) or init_llm_checked or has_reference
+    if task_type_value in ("cover", "cover-nofsq"):
         label = t("generation.cover_strength_label")
         help_text = t("generation.cover_strength_info")
     elif init_llm_checked:

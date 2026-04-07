@@ -71,20 +71,20 @@ VALID_TIME_SIGNATURES = [2, 3, 4, 6]
 # ==============================================================================
 
 # All supported generation tasks across different model variants
-TASK_TYPES = ["text2music", "repaint", "cover", "extract", "lego", "complete"]
+TASK_TYPES = ["text2music", "repaint", "cover", "cover-nofsq", "extract", "lego", "complete"]
 
 # Task types available for turbo models (optimized subset for speed)
 # - text2music: Generate from text descriptions
 # - repaint: Selective audio editing/regeneration  
 # - cover: Style transfer using reference audio
-TASK_TYPES_TURBO = ["text2music", "repaint", "cover"]
+TASK_TYPES_TURBO = ["text2music", "repaint", "cover", "cover-nofsq"]
 
 # Task types available for base models (full feature set)
 # Additional tasks requiring more computational resources:
 # - extract: Separate individual tracks/stems from audio
 # - lego: Multi-track generation (add layers)
 # - complete: Automatic completion of partial audio
-TASK_TYPES_BASE = ["text2music", "repaint", "cover", "extract", "lego", "complete"]
+TASK_TYPES_BASE = ["text2music", "repaint", "cover", "cover-nofsq", "extract", "lego", "complete"]
 
 
 # ==============================================================================
@@ -92,16 +92,17 @@ TASK_TYPES_BASE = ["text2music", "repaint", "cover", "extract", "lego", "complet
 # ==============================================================================
 
 # Default modes for turbo and SFT models (restricted set)
-GENERATION_MODES_TURBO = ["Simple", "Custom", "Remix", "Repaint"]
+GENERATION_MODES_TURBO = ["Simple", "Custom", "Remix", "Remix (Raw)", "Repaint"]
 
 # Extended modes for pure base models only — adds Extract/Lego/Complete
-GENERATION_MODES_BASE = ["Simple", "Custom", "Remix", "Repaint", "Extract", "Lego", "Complete"]
+GENERATION_MODES_BASE = ["Simple", "Custom", "Remix", "Remix (Raw)", "Repaint", "Extract", "Lego", "Complete"]
 
 # Mapping from generation mode to task_type value
 MODE_TO_TASK_TYPE = {
     "Simple": "text2music",
     "Custom": "text2music",
     "Remix": "cover",
+    "Remix (Raw)": "cover-nofsq",
     "Repaint": "repaint",
     "Extract": "extract",
     "Lego": "lego",
@@ -127,6 +128,7 @@ TASK_INSTRUCTIONS = {
     "text2music": "Fill the audio semantic mask based on the given conditions:",
     "repaint": "Repaint the mask area based on the given conditions:",
     "cover": "Generate audio semantic tokens based on the given conditions:",
+    "cover-nofsq": "Generate audio semantic tokens based on the given conditions:",
     "extract": "Extract the {TRACK_NAME} track from the audio:",
     "extract_default": "Extract the track from the audio:",
     "lego": "Generate the {TRACK_NAME} track based on the audio context:",

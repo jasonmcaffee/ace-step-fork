@@ -306,7 +306,7 @@ class GenerateMusicMixin:
 
             # Cover/repaint/lego/extract: lock duration to source audio.
             if processed_src_audio is not None and task_type in (
-                "cover", "repaint", "lego", "extract",
+                "cover", "cover-nofsq", "repaint", "lego", "extract",
             ):
                 audio_duration = processed_src_audio.shape[-1] / self.sample_rate
 
@@ -362,6 +362,7 @@ class GenerateMusicMixin:
                 velocity_ema_factor=velocity_ema_factor,
                 repaint_crossfade_frames=resolved_cf_frames,
                 repaint_injection_ratio=injection_ratio,
+                task_type=task_type,
             )
             outputs = service_run["outputs"]
             infer_steps_for_progress = service_run["infer_steps_for_progress"]

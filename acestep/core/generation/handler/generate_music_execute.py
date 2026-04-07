@@ -38,6 +38,7 @@ class GenerateMusicExecuteMixin:
         velocity_ema_factor: float = 0.0,
         repaint_crossfade_frames: int = 10,
         repaint_injection_ratio: float = 0.5,
+        task_type: str = "",
     ) -> Dict[str, Any]:
         """Invoke ``service_generate`` while maintaining background progress estimation.
 
@@ -91,6 +92,7 @@ class GenerateMusicExecuteMixin:
                     chunk_mask_modes=service_inputs.get("chunk_mask_modes_batch"),
                     repaint_crossfade_frames=repaint_crossfade_frames,
                     repaint_injection_ratio=repaint_injection_ratio,
+                    task_type=task_type,
                 )
             except Exception as exc:
                 _error["exc"] = exc
