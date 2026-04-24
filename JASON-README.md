@@ -1,130 +1,68 @@
 # ACE-Step Fork - Jason's Additions
 
-This fork of [ACE-Step](https://github.com/ace-step/ACE-Step) extends the music generation system with LLM-driven reasoning, new generation modes, audio analysis, LoRA support, and detailed research documentation.
+This fork of [ACE-Step](https://github.com/ace-step/ACE-Step) adds three new API endpoints, a bug fix for CUDA codebook indexing, a `vocal_language` hint parameter, new startup scripts for Windows/Triton, and detailed AI research documentation.
 
 ---
 
-## What Was Added
+## What Was Actually Changed (vs Upstream)
 
-### 1. Two-Phase Generation Pipeline (`inference.py`)
+### `acestep/api_server.py` — Three New Endpoints
 
-A new high-level module (`acestep/inference.py`) was created to orchestrate the full generation pipeline. It introduces:
+573 lines added at the end of `create_app()`:
 
-- **Phase 1**: Optional 5Hz Language Model (LM) generates structured metadata (BPM, key, duration, lyrics, captions) and audio codes with Chain-of-Thought reasoning.
-- **Phase 2**: The DiT (Diffusion Transformer) model uses those codes and metadata to produce the final audio.
-
-New data structures:
-- `GenerationParams` — 40+ parameters covering text inputs, music metadata, DiT tuning, LM sampling, and CoT flags
-- `GenerationConfig` — batch config with audio format selection
-- `GenerationResult`, `UnderstandResult`, `CreateSampleResult`, `FormatSampleResult` — typed result containers
-
-New functions:
-- `generate_music()` — orchestrates both phases, handles batch seeds, saves output audio with UUIDs
-- `understand_music()` — converts audio codes into structured descriptions (caption, lyrics, BPM, key, etc.)
-- `create_sample()` — **Simple Mode**: takes a natural language query like "a soft Bengali love song" and generates the full sample
-- `format_sample()` — **Format Mode**: enhances user-provided caption/lyrics and fills in missing metadata
-
----
-
-### 2. New API Endpoints (`api_server.py`)
-
-Extended the REST API with new endpoints and request fields:
-
-**New request fields on existing endpoints:**
-- `thinking: bool` — enable the 5Hz LM for code generation
-- `sample_mode: bool` / `sample_query: str` — trigger Simple Mode from a description
-- `use_format: bool` — run Format Mode to enhance input before generation
-- `lm_temperature`, `lm_cfg_scale`, `lm_top_k`, `lm_top_p` — LM sampling controls
-- `use_cot_caption`, `use_cot_language` — Chain-of-Thought reasoning flags
-- `allow_lm_batch: bool` — enable batch LM processing
-
-**New endpoints:**
 | Endpoint | Description |
 |---|---|
-| `POST /describe_audio` | Analyze audio (file upload or codes) → caption, lyrics, BPM, key, etc. |
-| `POST /extend_audio` | Extend audio duration using repaint task |
-| `POST /lego` | Generate specific instrument tracks (vocals, drums, bass, guitar, etc.) |
-| `POST /create_random_sample` | Simple Mode — generate from a natural language description |
-| `POST /format_input` | Format Mode — enhance and structure user-provided caption/lyrics |
-| `POST /release_task` | Submit a generation task (supports batching) |
-| `POST /query_result` | Poll batch task results |
+| `POST /describe_audio` | Analyze audio (file upload or raw codes) → caption, lyrics, BPM, key, duration, language. Accepts `multipart/form-data` (with `audio_file`) or `application/json` (with `audio_codes`). |
+| `POST /extend_audio` | Extend audio duration using the repaint task. |
+| `POST /lego` | Generate a specific instrument track (vocals, drums, bass, guitar, etc.) using the lego task. |
 
-Other server features added:
-- Model auto-download from HuggingFace or ModelScope (auto-detects network access)
-- API key authentication support
-- In-memory job queue with 1-hour task timeout
-- Audio format selection: mp3, wav, flac
+Also added two imports: `TRACK_NAMES` and `understand_music`.
 
 ---
 
-### 3. LoRA Support (`handler.py`)
+### `acestep/handler.py` — Codebook Index Clamping (Bug Fix)
 
-Added LoRA (Low-Rank Adaptation) adapter management:
+Added ~20 lines to `_decode_audio_codes_to_latents()` that clamp codebook indices to the valid range before passing them to the decoder:
 
-- `load_lora(lora_path)` — load a PEFT LoRA adapter onto the model
-- `unload_lora()` — restore the base model weights
-- `set_use_lora(bool)` — enable/disable LoRA at runtime
-- `set_lora_scale(float)` — adjust LoRA influence (0.0–1.0)
-- `get_lora_status()` — query current LoRA state
-
-Also added:
-- `convert_src_audio_to_codes()` — convert an audio file to semantic codes via VAE+tokenizer
-- `get_available_acestep_v15_models()` — list locally available v1.5 model checkpoints
-- `is_flash_attention_available()` — check for the `flash_attn` package
+- Detects codebook size dynamically from the quantizer (falling back to 64000 for ACE-Step v1.5's FSQ with levels `[8,8,8,5,5,5]`)
+- Clamps any out-of-range indices with a warning log
+- Prevents CUDA index-out-of-bounds errors when LM-generated codes are slightly out of range
 
 ---
 
-### 4. Language Model Integration (`llm_inference.py`)
+### `acestep/inference.py` — `vocal_language` Parameter on `understand_music()`
 
-Extended the LM inference layer with:
-
-- `generate_with_stop_condition()` — generate audio codes + metadata with constrained/FSM-based decoding for structured output
-- `understand_audio_from_codes()` — reverse-generate descriptions from audio codes
-- `create_sample_from_query()` — full sample generation from a natural language query
-- `format_sample_from_input()` — format and fill in missing metadata from user input
-
-Supports constrained decoding (FSM-based) so the LM outputs valid structured formats (JSON-like metadata blocks).
+Added the `vocal_language: Optional[str]` parameter to `understand_music()`, which passes a language hint to the LLM so it generates lyrics in the correct language rather than guessing. Also a handful of encoding fixes (BOM, UTF-8 special characters in docstrings).
 
 ---
 
-### 5. Triton Fix Startup Scripts
+### `acestep/llm_inference.py` — `vocal_language` Support in LLM Call
 
-Two `.bat` files were added to work around Triton's dependency on a C++ compiler:
-
-- **`ace_start_server_with_triton_fix.bat`** — sets VS2022 compiler paths, sets `ACESTEP_LM_MODEL_PATH=acestep-5Hz-lm-4B`, fixes Python UTF-8 encoding, then launches `api_server.py`
-- **`ace_start_ui_with_triton_fix.bat`** — same VS2022 fix, then launches the Gradio UI (`acestep_v15_pipeline.py`)
+Added ~10 lines wiring `vocal_language` through to the LLM: if provided and not `"unknown"`, it sets `user_metadata = {"language": ...}` and sets `skip_language = True` so the LM doesn't re-generate the language field. Also switched to `AutoTokenizer.from_pretrained(..., use_fast=True, trust_remote_code=True)`.
 
 ---
 
-### 6. AI Research Documentation (`ai-research/`)
+## New Files Added
 
-Seven detailed research documents covering the advanced features:
+### Startup Scripts (Windows / Triton Fix)
+
+- **`ace_start_server_with_triton_fix.bat`** — Sets VS2022 compiler paths (required for Triton to compile CUDA kernels on Windows), sets `ACESTEP_LM_MODEL_PATH=acestep-5Hz-lm-4B`, fixes Python UTF-8 encoding, then launches `api_server.py`.
+- **`ace_start_ui_with_triton_fix.bat`** — Same VS2022 fix, then launches the Gradio UI (`acestep_v15_pipeline.py`).
+
+### AI Research Documentation (`ai-research/`)
+
+Seven detailed docs covering the upstream ACE-Step capabilities, written as reference for development:
 
 | File | Topic |
 |---|---|
-| `repaint.md` | Audio inpainting/outpainting — time-region regeneration, latent padding math, infinite duration via chaining |
-| `loras.md` | LoRA adapters — architecture, training, available adapters (e.g. Chinese New Year LoRA), future roadmap |
-| `cover-song.md` | Cover/style transfer — audio code extraction, cover strength parameter, remixing and genre transformation |
-| `describe-audio.md` | Audio analysis pipeline — audio→codes→LM description, `/describe_audio` endpoint docs, training dataset use |
-| `extend-audio.md` | Duration extension — three extension modes, overlap for smooth transitions, chaining for infinite audio |
-| `lyric-2-vocal.md` | Vocal generation — four methods (caption engineering, lego task, extract, complete), limitations per model |
-| `lego.md` | Track-by-track generation — 12 track types, `/lego` endpoint, iterative arrangement building, client examples |
+| `repaint.md` | Audio inpainting/outpainting — time-region regeneration, latent padding math |
+| `loras.md` | LoRA adapters — available adapters, architecture, training |
+| `cover-song.md` | Cover/style transfer — audio codes, cover strength parameter |
+| `describe-audio.md` | Audio analysis pipeline — `/describe_audio` endpoint reference |
+| `extend-audio.md` | Duration extension — three modes, overlap for smooth transitions |
+| `lyric-2-vocal.md` | Vocal generation — four methods, model limitations |
+| `lego.md` | Track-by-track generation — 12 track types, `/lego` endpoint reference |
 
----
+### LoRA Model
 
-## Supported Task Types
-
-| Task | Description |
-|---|---|
-| `text2music` | Standard text-to-music generation |
-| `cover` | Style transfer — transform audio while preserving structure |
-| `repaint` | Region regeneration or audio extension |
-| `lego` | Generate a specific instrument track |
-| `extract` | Isolate a track (Base model only) |
-| `complete` | Add tracks to existing audio (Base model only) |
-
----
-
-## Key Model
-
-The 5Hz LM used for Chain-of-Thought reasoning is `acestep-5Hz-lm-4B` — a 4B-parameter language model that generates structured music metadata and semantic audio codes before the DiT diffusion pass.
+- **`loras/ACE-Step-v1.5-chinese-new-year-LoRA/`** — Pre-trained LoRA adapter files included in the repo.
