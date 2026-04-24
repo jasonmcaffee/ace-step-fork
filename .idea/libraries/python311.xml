@@ -1,0 +1,9 @@
+<component name="libraryTable">
+  <library name="python311">
+    <CLASSES>
+      <root url="jar://$PROJECT_DIR$/python_embeded/python311.zip!/" />
+    </CLASSES>
+    <JAVADOC />
+    <SOURCES />
+  </library>
+</component>

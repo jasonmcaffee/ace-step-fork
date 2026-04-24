@@ -49,6 +49,7 @@ from acestep.constants import (
     DEFAULT_DIT_INSTRUCTION,
     DEFAULT_LM_INSTRUCTION,
     TASK_INSTRUCTIONS,
+    TRACK_NAMES,
 )
 from acestep.inference import (
     GenerationParams,
@@ -56,6 +57,7 @@ from acestep.inference import (
     generate_music,
     create_sample,
     format_sample,
+    understand_music,
 )
 from acestep.gradio_ui.events.results_handlers import _build_generation_info
 from acestep.gpu_config import (
@@ -1450,7 +1452,9 @@ def create_app() -> FastAPI:
                 # Update local cache
                 _update_local_cache(job_id, result, "succeeded")
             except Exception:
-                job_store.mark_failed(job_id, traceback.format_exc())
+                error_tb = traceback.format_exc()
+                print(f'[API Server] Job {job_id} FAILED with error:\n{error_tb}')
+                job_store.mark_failed(job_id, error_tb)
 
                 # Update local cache
                 _update_local_cache(job_id, None, "failed")
@@ -1709,7 +1713,7 @@ def create_app() -> FastAPI:
                 print(f"[API Server] LLM model loaded: {lm_model_path}")
             else:
                 app.state._llm_init_error = llm_status
-                print(f"[API Server] Warning: LLM model failed to load: {llm_status}")
+                print("[API Server] Warning: LLM model failed to load:", repr(llm_status))
         else:
             print("[API Server] Skipping LLM initialization (disabled or not supported for this GPU)")
             app.state._llm_initialized = False
@@ -2237,6 +2241,573 @@ def create_app() -> FastAPI:
             })
         except Exception as e:
             return _wrap_response(None, code=500, error=f"format_sample error: {str(e)}")
+
+    @app.post("/describe_audio")
+    async def describe_audio_endpoint(request: Request, authorization: Optional[str] = Header(None)):
+        """
+        Describe/understand audio from uploaded audio file or audio codes.
+        
+        This endpoint analyzes audio and generates metadata about the music,
+        including caption, lyrics, BPM, duration, key scale, language, and time signature.
+        
+        Request Body:
+            multipart/form-data:
+                - audio_file: file - Audio file to analyze (mp3, wav, flac, etc.)
+                - audio_codes: str - Audio code tokens (alternative to audio_file)
+                - vocal_language: str - Language hint for lyrics generation (e.g., "en", "zh", "ja")
+                - temperature: float = 0.85 - LM sampling temperature
+                - top_k: int = None - Top-K sampling (0/null disables)
+                - top_p: float = None - Top-P sampling (>=1 disables)
+                - repetition_penalty: float = 1.0 - Repetition penalty
+                - use_constrained_decoding: bool = True - Use FSM-based constrained decoding
+                - constrained_decoding_debug: bool = False - Enable debug logging
+            
+            application/json:
+                - audio_codes: str - Audio code tokens (required when using JSON)
+                - (other parameters same as above)
+        
+        Response:
+            {
+                "data": {
+                    "caption": "A melancholic indie folk song...",
+                    "lyrics": "[Verse 1]\\nUnder the pale moonlight...",
+                    "bpm": 72,
+                    "duration": 180,
+                    "keyscale": "A minor",
+                    "language": "en",
+                    "timesignature": "4",
+                    "status_message": "✅ Understanding completed successfully"
+                },
+                "code": 200,
+                "error": null
+            }
+        """
+        content_type = (request.headers.get("content-type") or "").lower()
+        temp_files: list[str] = []
+        
+        llm: LLMHandler = app.state.llm_handler
+        h: AceStepHandler = app.state.handler
+
+        # Check if LLM is initialized
+        if not getattr(app.state, "_llm_initialized", False):
+            if getattr(app.state, "_llm_init_error", None):
+                return _wrap_response(None, code=500, error=f"LLM not initialized: {app.state._llm_init_error}")
+            return _wrap_response(None, code=500, error="LLM not initialized. Please start the server with LLM enabled.")
+
+        try:
+            audio_codes = ""
+            body: dict = {}
+            
+            if "multipart/form-data" in content_type:
+                form = await request.form()
+                # Extract non-file fields
+                body = {k: v for k, v in form.items() if not hasattr(v, 'read')}
+                
+                # Handle audio file upload
+                audio_file = form.get("audio_file")
+                if isinstance(audio_file, StarletteUploadFile):
+                    # Check if DiT handler is initialized for audio conversion
+                    if not getattr(app.state, "_initialized", False):
+                        return _wrap_response(None, code=500, error="DiT model not initialized for audio conversion")
+                    
+                    # Save uploaded file to temp
+                    audio_path = await _save_upload_to_temp(audio_file, prefix="describe_audio")
+                    temp_files.append(audio_path)
+                    
+                    # Convert audio to codes
+                    audio_codes = h.convert_src_audio_to_codes(audio_path)
+                    if audio_codes.startswith("❌"):
+                        return _wrap_response(None, code=400, error=audio_codes)
+                else:
+                    # No file uploaded, check for audio_codes in form
+                    audio_codes = str(body.get("audio_codes", "") or "")
+            
+            elif "json" in content_type:
+                body = await request.json()
+                audio_codes = body.get("audio_codes", "") or ""
+            
+            else:
+                return _wrap_response(None, code=415, error="Unsupported Content-Type. Use multipart/form-data (with audio_file) or application/json (with audio_codes).")
+
+            verify_token_from_request(body, authorization)
+            
+            # Parse other parameters
+            temperature = _to_float(body.get("temperature"), 0.85)
+            top_k = _to_int(body.get("top_k"))
+            top_p = _to_float(body.get("top_p"))
+            repetition_penalty = _to_float(body.get("repetition_penalty"), 1.0)
+            use_constrained_decoding = _to_bool(body.get("use_constrained_decoding", True), True)
+            constrained_decoding_debug = _to_bool(body.get("constrained_decoding_debug", False), False)
+            vocal_language = body.get("vocal_language", "") or ""
+
+            # Call understand_music
+            result = understand_music(
+                llm_handler=llm,
+                audio_codes=audio_codes,
+                temperature=temperature,
+                top_k=top_k if top_k and top_k > 0 else None,
+                top_p=top_p if top_p and top_p < 1.0 else None,
+                repetition_penalty=repetition_penalty,
+                use_constrained_decoding=use_constrained_decoding,
+                constrained_decoding_debug=constrained_decoding_debug,
+                vocal_language=vocal_language if vocal_language else None,
+            )
+
+            if not result.success:
+                return _wrap_response(None, code=500, error=result.error or result.status_message)
+
+            return _wrap_response({
+                "caption": result.caption,
+                "lyrics": result.lyrics,
+                "bpm": result.bpm,
+                "duration": result.duration,
+                "keyscale": result.keyscale,
+                "language": result.language,
+                "timesignature": result.timesignature,
+                "status_message": result.status_message,
+            })
+        except Exception as e:
+            return _wrap_response(None, code=500, error=f"describe_audio error: {str(e)}")
+        finally:
+            # Clean up temp files
+            for p in temp_files:
+                try:
+                    os.remove(p)
+                except Exception:
+                    pass
+
+    @app.post("/extend_audio")
+    async def extend_audio_endpoint(request: Request, authorization: Optional[str] = Header(None)):
+        """
+        Extend audio by generating new content that continues from the original.
+        
+        This endpoint uses the repaint task to extend audio at the end, beginning,
+        or modify specific sections. The model uses context from the original audio
+        to generate coherent continuations.
+        
+        Request Body (multipart/form-data):
+            - audio_file: file - Audio file to extend (mp3, wav, flac, etc.) [required]
+            - extend_duration: float = 30.0 - How many seconds to add
+            - overlap_duration: float = 5.0 - Seconds of overlap for smooth transition
+            - extend_direction: str = "end" - Direction: "end", "start", or "both"
+            - caption: str - Description for the extended section
+            - lyrics: str - Lyrics for the extended section (if vocals)
+            - vocal_language: str = "unknown" - Language hint
+            - bpm: int - BPM (auto-detected if not provided)
+            - key_scale: str - Musical key (auto-detected if not provided)
+            - time_signature: str - Time signature (auto-detected if not provided)
+            - inference_steps: int = 8 - Diffusion steps
+            - guidance_scale: float = 7.0 - CFG strength
+            - seed: int = -1 - Random seed (-1 for random)
+            - thinking: bool = True - Use 5Hz LM for code generation
+            - lm_temperature: float = 0.85 - LM sampling temperature
+        
+        Response:
+            {
+                "data": {
+                    "audio_url": "/v1/audio?path=...",
+                    "audio_path": "...",
+                    "original_duration": 30.0,
+                    "extended_duration": 60.0,
+                    "repainting_start": 25.0,
+                    "repainting_end": 60.0,
+                    "status_message": "✅ Audio extended successfully"
+                },
+                "code": 200,
+                "error": null
+            }
+        """
+        content_type = (request.headers.get("content-type") or "").lower()
+        temp_files: list[str] = []
+        
+        h: AceStepHandler = app.state.handler
+        llm: LLMHandler = app.state.llm_handler
+
+        # Check if DiT is initialized
+        if not getattr(app.state, "_initialized", False):
+            return _wrap_response(None, code=500, error="DiT model not initialized")
+
+        try:
+            if "multipart/form-data" not in content_type:
+                return _wrap_response(None, code=415, error="Content-Type must be multipart/form-data with audio_file")
+            
+            form = await request.form()
+            body = {k: v for k, v in form.items() if not hasattr(v, 'read')}
+            
+            verify_token_from_request(body, authorization)
+            
+            # Handle audio file upload (required)
+            audio_file = form.get("audio_file")
+            if not isinstance(audio_file, StarletteUploadFile):
+                return _wrap_response(None, code=400, error="audio_file is required (multipart/form-data file upload)")
+            
+            # Save uploaded file to temp
+            src_audio_path = await _save_upload_to_temp(audio_file, prefix="extend_audio")
+            temp_files.append(src_audio_path)
+            
+            # Get original audio duration
+            try:
+                import torchaudio
+                audio_tensor, sr = torchaudio.load(src_audio_path)
+                original_duration = audio_tensor.shape[-1] / sr
+            except Exception as e:
+                return _wrap_response(None, code=400, error=f"Failed to load audio file: {str(e)}")
+            
+            # Parse parameters
+            extend_duration = _to_float(body.get("extend_duration"), 30.0)
+            overlap_duration = _to_float(body.get("overlap_duration"), 5.0)
+            extend_direction = str(body.get("extend_direction", "end") or "end").lower()
+            caption = str(body.get("caption", "") or "")
+            lyrics = str(body.get("lyrics", "") or "")
+            vocal_language = str(body.get("vocal_language", "unknown") or "unknown")
+            bpm = _to_int(body.get("bpm"))
+            key_scale = str(body.get("key_scale", "") or "")
+            time_signature = str(body.get("time_signature", "") or "")
+            inference_steps = _to_int(body.get("inference_steps")) or 8
+            guidance_scale = _to_float(body.get("guidance_scale"), 7.0)
+            seed = _to_int(body.get("seed")) or -1
+            thinking = _to_bool(body.get("thinking", True), True)
+            lm_temperature = _to_float(body.get("lm_temperature"), 0.85)
+            audio_format = str(body.get("audio_format", "mp3") or "mp3")
+            
+            # Validate extend_direction
+            if extend_direction not in ["end", "start", "both"]:
+                return _wrap_response(None, code=400, error=f"Invalid extend_direction: {extend_direction}. Must be 'end', 'start', or 'both'")
+            
+            # Validate overlap
+            if overlap_duration < 0:
+                overlap_duration = 0
+            if overlap_duration > original_duration:
+                overlap_duration = original_duration * 0.5  # Max 50% overlap
+            
+            # Calculate repainting parameters based on direction
+            if extend_direction == "end":
+                # Extend at the end: keep most of original, regenerate from (end - overlap) to (end + extend_duration)
+                repainting_start = original_duration - overlap_duration
+                repainting_end = original_duration + extend_duration
+                total_duration = repainting_end
+            elif extend_direction == "start":
+                # Extend at the beginning: prepend content
+                repainting_start = -extend_duration
+                repainting_end = overlap_duration  # Overlap into original
+                total_duration = original_duration + extend_duration
+            else:  # "both"
+                # Extend at both ends
+                repainting_start = -extend_duration / 2
+                repainting_end = original_duration + extend_duration / 2
+                total_duration = original_duration + extend_duration
+            
+            # Build generation params
+            from acestep.inference import GenerationParams, GenerationConfig, generate_music
+            
+            params = GenerationParams(
+                task_type="repaint",
+                src_audio=src_audio_path,
+                repainting_start=repainting_start,
+                repainting_end=repainting_end,
+                caption=caption if caption else "continuation of the music",
+                lyrics=lyrics,
+                vocal_language=vocal_language,
+                bpm=bpm,
+                keyscale=key_scale,
+                timesignature=time_signature,
+                inference_steps=inference_steps,
+                guidance_scale=guidance_scale,
+                seed=seed,
+                thinking=thinking,
+                lm_temperature=lm_temperature,
+            )
+            
+            config = GenerationConfig(batch_size=1, audio_format=audio_format)
+            
+            # Get output directory
+            output_dir = os.environ.get("ACESTEP_OUTPUT_DIR", os.path.join(os.getcwd(), "outputs"))
+            os.makedirs(output_dir, exist_ok=True)
+            
+            # Generate extended audio
+            result = generate_music(
+                dit_handler=h,
+                llm_handler=llm,
+                params=params,
+                config=config,
+                save_dir=output_dir,
+            )
+            
+            if not result.success:
+                return _wrap_response(None, code=500, error=result.status_message)
+            
+            if not result.audios or len(result.audios) == 0:
+                return _wrap_response(None, code=500, error="No audio generated")
+            
+            audio_path = result.audios[0].get("path", "")
+            if not audio_path or not os.path.exists(audio_path):
+                return _wrap_response(None, code=500, error="Audio file not saved")
+            
+            # Read audio file and convert to base64
+            import base64
+            with open(audio_path, "rb") as f:
+                audio_bytes = f.read()
+            
+            # Determine mime type from file extension
+            ext = os.path.splitext(audio_path)[1].lower()
+            mime_types = {
+                ".mp3": "audio/mpeg",
+                ".wav": "audio/wav",
+                ".flac": "audio/flac",
+                ".ogg": "audio/ogg",
+            }
+            mime_type = mime_types.get(ext, "audio/mpeg")
+            
+            # Create base64 data URL
+            audio_base64 = base64.b64encode(audio_bytes).decode("utf-8")
+            audio_data_url = f"data:{mime_type};base64,{audio_base64}"
+            
+            # Clean up the generated file since we're returning the data
+            try:
+                os.remove(audio_path)
+            except Exception:
+                pass
+            
+            return _wrap_response({
+                "audio_data": audio_data_url,
+                "audio_format": ext.lstrip(".") or "mp3",
+                "original_duration": original_duration,
+                "extended_duration": total_duration,
+                "repainting_start": repainting_start,
+                "repainting_end": repainting_end,
+                "extend_direction": extend_direction,
+                "status_message": f"✅ Audio extended successfully from {original_duration:.1f}s to {total_duration:.1f}s",
+            })
+            
+        except Exception as e:
+            logger.exception("Error in /extend_audio endpoint")
+            return _wrap_response(None, code=500, error=f"extend_audio error: {str(e)}")
+        finally:
+            # Clean up temp files (but not the output)
+            for p in temp_files:
+                try:
+                    os.remove(p)
+                except Exception:
+                    pass
+
+    @app.post("/lego")
+    async def lego_endpoint(request: Request, authorization: Optional[str] = Header(None)):
+        """
+        Generate a specific track (vocals, drums, guitar, etc.) based on existing audio context.
+        
+        This endpoint uses the lego task to add a new track layer to existing audio.
+        For example, add vocals to an instrumental, or add drums to a guitar track.
+        
+        NOTE: This task requires the Base model (not turbo). Make sure you're running
+        with ACESTEP_CONFIG_PATH=acestep-v15-base
+        
+        Request Body (multipart/form-data):
+            - audio_file: file - Context audio file (mp3, wav, flac, etc.) [required]
+            - track_name: str - Track to generate [required]
+              Options: vocals, backing_vocals, drums, bass, guitar, keyboard,
+                       percussion, strings, synth, fx, brass, woodwinds
+            - caption: str - Description for the generated track
+            - lyrics: str - Lyrics (required if track_name is "vocals" or "backing_vocals")
+            - vocal_language: str = "en" - Language for vocals
+            - bpm: int - BPM (auto-detected if not provided)
+            - key_scale: str - Musical key (auto-detected if not provided)
+            - time_signature: str - Time signature (auto-detected if not provided)
+            - repainting_start: float = 0.0 - Start time in seconds for track generation
+            - repainting_end: float = -1 - End time in seconds (-1 for full length)
+            - inference_steps: int = 50 - Diffusion steps (base model uses more steps)
+            - guidance_scale: float = 7.0 - CFG strength
+            - seed: int = -1 - Random seed (-1 for random)
+            - audio_format: str = "mp3" - Output format
+        
+        Response:
+            {
+                "data": {
+                    "audio_data": "data:audio/mp3;base64,...",
+                    "audio_format": "mp3",
+                    "track_name": "vocals",
+                    "duration": 30.0,
+                    "status_message": "✅ Track generated successfully"
+                },
+                "code": 200,
+                "error": null
+            }
+        """
+        content_type = (request.headers.get("content-type") or "").lower()
+        temp_files: list[str] = []
+        
+        h: AceStepHandler = app.state.handler
+        llm: LLMHandler = app.state.llm_handler
+
+        # Check if DiT is initialized
+        if not getattr(app.state, "_initialized", False):
+            return _wrap_response(None, code=500, error="DiT model not initialized")
+
+        try:
+            if "multipart/form-data" not in content_type:
+                return _wrap_response(None, code=415, error="Content-Type must be multipart/form-data with audio_file")
+            
+            form = await request.form()
+            body = {k: v for k, v in form.items() if not hasattr(v, 'read')}
+            
+            verify_token_from_request(body, authorization)
+            
+            # Handle audio file upload (required)
+            audio_file = form.get("audio_file")
+            if not isinstance(audio_file, StarletteUploadFile):
+                return _wrap_response(None, code=400, error="audio_file is required (multipart/form-data file upload)")
+            
+            # Save uploaded file to temp
+            src_audio_path = await _save_upload_to_temp(audio_file, prefix="lego_context")
+            temp_files.append(src_audio_path)
+            
+            # Get track_name (required)
+            track_name = str(body.get("track_name", "") or "").strip().lower()
+            if not track_name:
+                return _wrap_response(None, code=400, error="track_name is required. Options: " + ", ".join(TRACK_NAMES))
+            if track_name not in TRACK_NAMES:
+                return _wrap_response(None, code=400, error=f"Invalid track_name: '{track_name}'. Valid options: " + ", ".join(TRACK_NAMES))
+            
+            # Get audio duration
+            try:
+                import torchaudio
+                audio_tensor, sr = torchaudio.load(src_audio_path)
+                audio_duration = audio_tensor.shape[-1] / sr
+            except Exception as e:
+                return _wrap_response(None, code=400, error=f"Failed to load audio file: {str(e)}")
+            
+            # Parse parameters
+            caption = str(body.get("caption", "") or "")
+            lyrics = str(body.get("lyrics", "") or "")
+            vocal_language = str(body.get("vocal_language", "en") or "en")
+            bpm = _to_int(body.get("bpm"))
+            key_scale = str(body.get("key_scale", "") or "")
+            time_signature = str(body.get("time_signature", "") or "")
+            repainting_start = _to_float(body.get("repainting_start"), 0.0)
+            repainting_end = _to_float(body.get("repainting_end"), -1.0)
+            inference_steps = _to_int(body.get("inference_steps")) or 50  # Base model uses more steps
+            guidance_scale = _to_float(body.get("guidance_scale"), 7.0)
+            seed = _to_int(body.get("seed")) or -1
+            audio_format = str(body.get("audio_format", "mp3") or "mp3")
+            batch_size = _to_int(body.get("batch_size")) or 1
+            if batch_size < 1:
+                batch_size = 1
+            if batch_size > 8:
+                batch_size = 8  # Cap at 8 to prevent OOM
+            
+            # Generate instruction for the track
+            instruction = h.generate_instruction(
+                task_type="lego",
+                track_name=track_name,
+            )
+            
+            # If no caption provided, generate a default one
+            if not caption:
+                caption = f"{track_name} track, matching the style and rhythm of the context"
+            
+            # If repainting_end is -1, use full audio duration
+            if repainting_end < 0:
+                repainting_end = audio_duration
+            
+            # Build generation params
+            params = GenerationParams(
+                task_type="lego",
+                instruction=instruction,
+                src_audio=src_audio_path,
+                repainting_start=repainting_start,
+                repainting_end=repainting_end,
+                caption=caption,
+                lyrics=lyrics,
+                vocal_language=vocal_language,
+                bpm=bpm,
+                keyscale=key_scale,
+                timesignature=time_signature,
+                duration=audio_duration,
+                inference_steps=inference_steps,
+                guidance_scale=guidance_scale,
+                seed=seed,
+                thinking=False,  # Lego task doesn't use LM thinking
+            )
+            
+            config = GenerationConfig(batch_size=batch_size, audio_format=audio_format)
+            
+            # Get output directory
+            output_dir = os.environ.get("ACESTEP_OUTPUT_DIR", os.path.join(os.getcwd(), "outputs"))
+            os.makedirs(output_dir, exist_ok=True)
+            
+            # Generate the track
+            result = generate_music(
+                dit_handler=h,
+                llm_handler=llm,
+                params=params,
+                config=config,
+                save_dir=output_dir,
+            )
+            
+            if not result.success:
+                return _wrap_response(None, code=500, error=result.status_message)
+            
+            if not result.audios or len(result.audios) == 0:
+                return _wrap_response(None, code=500, error="No audio generated")
+            
+            # Process all generated audios
+            import base64
+            mime_types = {
+                ".mp3": "audio/mpeg",
+                ".wav": "audio/wav",
+                ".flac": "audio/flac",
+                ".ogg": "audio/ogg",
+            }
+            
+            audio_results = []
+            for audio_info in result.audios:
+                audio_path = audio_info.get("path", "")
+                if not audio_path or not os.path.exists(audio_path):
+                    continue
+                
+                # Read and encode
+                with open(audio_path, "rb") as f:
+                    audio_bytes = f.read()
+                
+                ext = os.path.splitext(audio_path)[1].lower()
+                mime_type = mime_types.get(ext, "audio/mpeg")
+                audio_base64 = base64.b64encode(audio_bytes).decode("utf-8")
+                audio_data_url = f"data:{mime_type};base64,{audio_base64}"
+                
+                audio_results.append({
+                    "audio_data": audio_data_url,
+                    "audio_format": ext.lstrip(".") or "mp3",
+                })
+                
+                # Clean up
+                try:
+                    os.remove(audio_path)
+                except Exception:
+                    pass
+            
+            if not audio_results:
+                return _wrap_response(None, code=500, error="No audio files saved")
+            
+            return _wrap_response({
+                "audios": audio_results,
+                "track_name": track_name,
+                "batch_size": len(audio_results),
+                "duration": audio_duration,
+                "repainting_start": repainting_start,
+                "repainting_end": repainting_end,
+                "instruction": instruction,
+                "status_message": f"✅ {len(audio_results)} {track_name.upper()} track(s) generated successfully",
+            })
+            
+        except Exception as e:
+            logger.exception("Error in /lego endpoint")
+            return _wrap_response(None, code=500, error=f"lego error: {str(e)}")
+        finally:
+            # Clean up temp files
+            for p in temp_files:
+                try:
+                    os.remove(p)
+                except Exception:
+                    pass
 
     @app.get("/v1/audio")
     async def get_audio(path: str, _: None = Depends(verify_api_key)):

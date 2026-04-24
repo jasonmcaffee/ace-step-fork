@@ -734,8 +734,30 @@ class AceStepHandler:
             detokenizer = self.model.detokenizer
             
             num_quantizers = getattr(quantizer, "num_quantizers", 1)
+            
+            # Get the codebook size from the quantizer to clamp indices
+            # FSQ with levels [8,8,8,5,5,5] has codebook_size = 64000
+            if hasattr(quantizer, 'codebooks'):
+                codebook_size = quantizer.codebooks.shape[1]  # [num_quantizers, codebook_size, dim]
+            elif hasattr(quantizer, 'layers') and len(quantizer.layers) > 0:
+                # For ResidualFSQ, compute from levels
+                first_layer = quantizer.layers[0]
+                if hasattr(first_layer, 'levels'):
+                    import math
+                    codebook_size = math.prod(first_layer.levels)
+                else:
+                    codebook_size = 64000  # Default for ACE Step v1.5
+            else:
+                codebook_size = 64000  # Default for ACE Step v1.5
+            
             # Create indices tensor: [T_5Hz]
             indices = torch.tensor(code_ids, device=self.device, dtype=torch.long)  # [T_5Hz]
+            
+            # Clamp indices to valid range [0, codebook_size-1] to prevent CUDA index errors
+            max_valid_index = codebook_size - 1
+            if (indices > max_valid_index).any():
+                logger.warning(f"[_decode_audio_codes_to_latents] Clamping {(indices > max_valid_index).sum().item()} indices from max {indices.max().item()} to {max_valid_index}")
+                indices = indices.clamp(0, max_valid_index)
             
             indices = indices.unsqueeze(0).unsqueeze(-1)  # [1, T_5Hz, 1]
             

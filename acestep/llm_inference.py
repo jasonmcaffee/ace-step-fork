@@ -355,7 +355,7 @@ class LLMHandler:
             logger.info("loading 5Hz LM tokenizer... it may take 80~90s")
             start_time = time.time()
             # TODO: load tokenizer too slow, not found solution yet
-            llm_tokenizer = AutoTokenizer.from_pretrained(full_lm_model_path, use_fast=True)
+            llm_tokenizer = AutoTokenizer.from_pretrained(full_lm_model_path, use_fast=True, trust_remote_code=True)
             logger.info(f"5Hz LM tokenizer loaded successfully in {time.time() - start_time:.2f} seconds")
             self.llm_tokenizer = llm_tokenizer
             
@@ -1379,6 +1379,7 @@ class LLMHandler:
         repetition_penalty: float = 1.0,
         use_constrained_decoding: bool = True,
         constrained_decoding_debug: bool = False,
+        vocal_language: Optional[str] = None,
     ) -> Tuple[Dict[str, Any], str]:
         """
         Understand audio codes and generate metadata + lyrics.
@@ -1397,6 +1398,7 @@ class LLMHandler:
             repetition_penalty: Repetition penalty (1.0 = no penalty)
             use_constrained_decoding: Whether to use FSM-based constrained decoding for metadata
             constrained_decoding_debug: Whether to enable debug logging for constrained decoding
+            vocal_language: Optional language hint for lyrics generation (e.g., "en", "zh", "ja")
             
         Returns:
             Tuple of (metadata_dict, status_message)
@@ -1426,6 +1428,15 @@ class LLMHandler:
         # Build formatted prompt for understanding
         formatted_prompt = self.build_formatted_prompt_for_understanding(audio_codes)
         print(f"formatted_prompt: {formatted_prompt}")
+        
+        # Build user_metadata with language hint if provided
+        user_metadata = None
+        skip_language = False
+        if vocal_language and vocal_language.strip() and vocal_language.strip().lower() != "unknown":
+            user_metadata = {"language": vocal_language.strip()}
+            skip_language = True  # Skip generating language, use the provided one
+            logger.info(f"Using vocal_language hint: {vocal_language}")
+        
         # Generate using constrained decoding (understand phase)
         # We want to generate metadata first (CoT), then lyrics (natural text)
         # Note: cfg_scale and negative_prompt are not used in understand mode
@@ -1437,9 +1448,9 @@ class LLMHandler:
                 "top_p": top_p,
                 "repetition_penalty": repetition_penalty,
                 "target_duration": None,  # No duration constraint for understanding
-                "user_metadata": None,  # No user metadata injection
+                "user_metadata": user_metadata,  # Pass language hint if provided
                 "skip_caption": False,  # Generate caption
-                "skip_language": False,  # Generate language
+                "skip_language": skip_language,  # Skip if language hint provided
                 "skip_genres": False,  # Generate genres
                 "generation_phase": "understand",  # Understanding phase: generate CoT metadata, then free-form lyrics
                 # Context for building unconditional prompt
