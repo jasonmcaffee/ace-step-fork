@@ -1,4 +1,25 @@
 
+"""
+Constrained Logits Processor for ACE-Step Language Model
+
+This module implements a finite state machine (FSM) based logits processor that constrains
+the language model's output to follow specific formats and value ranges during music generation.
+
+Key Features:
+- Enforces structured metadata generation (BPM, duration, keyscale, etc.)
+- Validates numeric ranges (BPM: 30-300, Duration: 10-600s)
+- Ensures proper formatting for musical metadata
+- Prevents generation of invalid tokens or formats
+- Supports constrained audio code generation (0-63999)
+
+The FSM guides the model through different states to ensure outputs conform to expected
+schema requirements without post-processing corrections.
+
+Usage:
+    processor = ConstrainedLogitsProcessor(tokenizer, mode="metadata")
+    outputs = model.generate(inputs, logits_processor=[processor])
+"""
+
 from enum import Enum, auto
 from typing import Optional, Dict, Any, Tuple, List, Callable, Set
 from loguru import logger
@@ -18,6 +39,12 @@ from acestep.constants import (
     DURATION_MAX,
     VALID_TIME_SIGNATURES,
 )
+
+
+# ==============================================================================
+# Audio Code Constants
+# ==============================================================================
+MAX_AUDIO_CODE = 63999  # Maximum valid audio code value (codebook size = 64000)
 
 
 # ==============================================================================
@@ -522,21 +549,61 @@ class MetadataConstrainedLogitsProcessor(LogitsProcessor):
         """
         Precompute audio code token IDs (tokens matching <|audio_code_\\d+|>).
         These tokens should be blocked during caption generation.
+        Only tokens with code values in range [0, MAX_AUDIO_CODE] are included.
         """
         import re
-        audio_code_pattern = re.compile(r'^<\|audio_code_\d+\|>$')
+        audio_code_pattern = re.compile(r'^<\|audio_code_(\d+)\|>$')
+        invalid_tokens_count = 0
         
         # Iterate through vocabulary to find audio code tokens
         for token_id in range(self.vocab_size):
             try:
                 token_text = self.tokenizer.decode([token_id])
-                if audio_code_pattern.match(token_text):
-                    self.audio_code_token_ids.add(token_id)
+                match = audio_code_pattern.match(token_text)
+                if match:
+                    # Extract code value from token text
+                    code_value = int(match.group(1))
+                    # Only add tokens with valid code values (0-63999)
+                    if 0 <= code_value <= MAX_AUDIO_CODE:
+                        self.audio_code_token_ids.add(token_id)
+                    else:
+                        invalid_tokens_count += 1
+                        if self.debug:
+                            logger.debug(f"Skipping audio code token {token_id} with invalid code value {code_value} (max: {MAX_AUDIO_CODE})")
             except Exception:
                 continue
         
-        if self.debug:
-            logger.debug(f"Found {len(self.audio_code_token_ids)} audio code tokens")
+        if invalid_tokens_count > 0:
+            logger.debug(f"Found {invalid_tokens_count} audio code tokens with values outside valid range [0, {MAX_AUDIO_CODE}]")
+        
+        # Log warning if no valid tokens found (this would prevent code generation)
+        if len(self.audio_code_token_ids) == 0:
+            logger.warning(f"No valid audio code tokens found in vocabulary (range [0, {MAX_AUDIO_CODE}]). Code generation may fail.")
+        elif self.debug:
+            logger.debug(f"Found {len(self.audio_code_token_ids)} valid audio code tokens (range [0, {MAX_AUDIO_CODE}])")
+    
+    def _extract_code_from_token(self, token_id: int) -> Optional[int]:
+        """
+        Extract audio code value from a token ID.
+        
+        Args:
+            token_id: Token ID to extract code value from
+            
+        Returns:
+            Code value if token is a valid audio code token, None otherwise
+        """
+        import re
+        audio_code_pattern = re.compile(r'^<\|audio_code_(\d+)\|>$')
+        
+        try:
+            token_text = self.tokenizer.decode([token_id])
+            match = audio_code_pattern.match(token_text)
+            if match:
+                return int(match.group(1))
+        except Exception:
+            pass
+        
+        return None
     
     def _build_audio_code_mask(self):
         """
@@ -1537,6 +1604,8 @@ class MetadataConstrainedLogitsProcessor(LogitsProcessor):
         
         if self.state == FSMState.CODES_GENERATION:
             # Block all non-audio-code tokens (only allow audio codes and EOS)
+            # Note: audio_code_token_ids already contains only valid tokens (0-63999 range)
+            # because _precompute_audio_code_tokens() filters out invalid tokens during initialization
             if self.non_audio_code_mask is not None:
                 # Move mask to same device/dtype as scores if needed
                 if self.non_audio_code_mask.device != scores.device or self.non_audio_code_mask.dtype != scores.dtype:
