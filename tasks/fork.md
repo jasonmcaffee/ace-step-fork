@@ -11,7 +11,7 @@ We added documentation in ai-research, and modified acestep api_server.py, handl
 
 
 ## Change the remove git origin
-We want to commit what we have and push it to: 
+We want to commit what we have and push it to:
 https://github.com/jasonmcaffee/ace-step-fork.git
 
 once that is ready, let me know, and i'll commit the changes and push.
